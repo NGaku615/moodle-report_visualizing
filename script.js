@@ -9,32 +9,21 @@ let start_hour = document.getElementById("start_hour").title;
 let end_hour = document.getElementById("end_hour").title;
 let start_minute = document.getElementById("start_minute").title;
 let end_minute = document.getElementById("end_minute").title;
-const start_time = convertToUnixTime(start_year, start_month, start_day, start_hour, start_minute);
-const end_time = convertToUnixTime(end_year, end_month, end_day, end_hour, end_minute);
-const ydata = d3.json("./yscalejson.php?course=" + course);
-const log = d3.json("./logjson.php?course=" + course + "&start_time=" + start_time + "&end_time=" + end_time);
 
-//unixtimeに変換する関数
-function convertToUnixTime(year, month, day, hour, minute) {
-    // JavaScriptのDateオブジェクトは月を0から11で扱うため、月を1引く
+//convert to unixtime
+const convertToUnixTime = (year, month, day, hour, minute) => {
+    // Subtract 1 for the month because JavaScript's Date object treats the month as 0 to 11.
     const date = new Date(year, month - 1, day, hour, minute);
-    // UNIX時間に変換
+    // Converted to UNIX time
     return Math.floor(date.getTime() / 1000);
+};
+
+const stripHTMLTags = (html) => {
+    return html.replace(/<\/?[^>]+(>|$)/g, "");
 }
 
-// JSONデータを2つ取得してから処理を行う
-Promise.all([ydata, log])
-    .then(function ([data1, data2]) {
-
-        // データ2に基づいて2つ目のSVGを描画
-        drawChart(data2, data1, "#chart1");
-    })
-    .catch(function (error) {
-        console.error('Error loading the data:', error);
-    });
-
-function drawChart(data2, data1, chartId) {
-    function extractFirstSpan(html) {
+const drawChart = (data2, data1, chartId) => {
+    const extractFirstSpan = (html) => {
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const firstSpan = doc.querySelector('span[lang="ja"]');
         let text = firstSpan ? firstSpan.textContent : doc.body.textContent;
@@ -42,7 +31,7 @@ function drawChart(data2, data1, chartId) {
     }
     const margin = { top: 40, bottom: 40, left: 210 };
     const width = 1400 - margin.left;
-    const height = 1200 - margin.top - margin.bottom;
+    const height = 1100 - margin.top - margin.bottom;
 
     // y軸用のスケールを定義
     const yScale = d3.scalePoint()
@@ -50,7 +39,7 @@ function drawChart(data2, data1, chartId) {
         .range([0, height])
         .padding(0);
 
-    function unixToDate(unixTimestamp) {
+    const unixToDate = (unixTimestamp) => {
         return new Date(unixTimestamp * 1000);
     }
 
@@ -62,13 +51,43 @@ function drawChart(data2, data1, chartId) {
         .domain([startDate, endDate])
         .range([0, width]);
 
+    // ズーム時の処理
+    const zoomed = (event) => {
+        // 新しいスケールを作成
+        const newXScale = event.transform.rescaleX(xScale);
+
+        // x軸を更新
+        xAxis.call(d3.axisBottom(newXScale)
+            .tickFormat(d3.timeFormat("%H:%M")));
+
+        // 折れ線を更新
+        chartGroup.selectAll(".user-line")
+            .attr("d", d => {
+                const newLineGenerator = d3.line()
+                    .x(d => newXScale(new Date(d.timecreated * 1000)))
+                    .y(d => {
+                        const parsedName = stripHTMLTags(d.name);
+                        const index = data1.findIndex(item => {
+                            const parsedItem = stripHTMLTags(item);
+                            return parsedItem.includes(parsedName);
+                        });
+                        return yScale(index);
+                    })
+                    .curve(d3.curveLinear);
+                return newLineGenerator(d);
+            });
+
+        // 点を更新
+        chartGroup.selectAll(".user-dot")
+            .attr("cx", d => newXScale(new Date(d.timecreated * 1000)));
+    }
+
     // ズーム機能の定義
     const zoom = d3.zoom()
         .scaleExtent([1, 20]) // ズームの範囲を1倍から20倍に制限
         .extent([[0, 0], [width, height]])
         .on("zoom", zoomed);
 
-    // クリップパスを定義
     const svg = d3.select(chartId)
         .append("svg")
         .attr("width", width + margin.left)
@@ -94,7 +113,7 @@ function drawChart(data2, data1, chartId) {
     const tooltip = chartGroup.append("g")
         .style("pointer-events", "none") // ツールチップがマウスイベントを受けないようにする
         .style("opacity", 0); // 初期状態では非表示
-    
+
     tooltip.append("rect")
         .attr("x", 0)
         .attr("y", 0)
@@ -103,9 +122,9 @@ function drawChart(data2, data1, chartId) {
         .attr("rx", 5)
         .attr("ry", 5)
         .attr("fill", "white")
-        .attr("fill-opacity",1)
+        .attr("fill-opacity", 1)
         .attr("stroke", "gray");
-    
+
     tooltip.append("text")
         .attr("x", 10)
         .attr("y", 20)
@@ -113,7 +132,7 @@ function drawChart(data2, data1, chartId) {
         .attr("fill", "black");
 
     // グリッドラインを描画
-    function drawGrid() {
+    const drawGrid = () => {
         chartGroup.selectAll(".grid-line").remove();
         chartGroup.selectAll(".grid-line")
             .data(data1.map((d, i) => i))
@@ -154,10 +173,6 @@ function drawChart(data2, data1, chartId) {
         })
         .curve(d3.curveLinear);
 
-    function stripHTMLTags(html) {
-        return html.replace(/<\/?[^>]+(>|$)/g, "");
-    }
-
     // ユーザーごとのデータを描画
     Object.keys(data2).forEach(userId => {
         const userLog = data2[userId];
@@ -175,7 +190,7 @@ function drawChart(data2, data1, chartId) {
             .on("click", function () {
                 chartGroup.selectAll(".user-line")
                     .attr("opacity", 0.2)
-                    .attr("stork-width", 2);
+                    .attr("stroke-width", 2);
 
                 chartGroup.selectAll(".user-dot")
                     .attr("opacity", 0.2)
@@ -189,23 +204,23 @@ function drawChart(data2, data1, chartId) {
                     .attr("opacity", 1)
                     .attr("r", 6);
             })
-            .on("mouseover",(event,d) =>{
-                console.log("mouseover event",`${userId}`);
+            .on("mouseover", (event, d) => {
+                console.log("mouseover event", `${userId}`);
 
                 tooltip.raise();
-                
-                tooltip.style("opacity",1)
+
+                tooltip.style("opacity", 1)
                     .select("text")
                     .text(`${userId}`);
             })
-            .on("mousemove",(event)=> {
-                const [mouseX,mouseY] = d3.pointer(event);
+            .on("mousemove", (event) => {
+                const [mouseX, mouseY] = d3.pointer(event);
 
-                tooltip.attr("transform",`translate(${mouseX + 10}, ${mouseY - 20})`);
+                tooltip.attr("transform", `translate(${mouseX + 10}, ${mouseY - 20})`);
             })
-            .on("mouseout",()=> {
+            .on("mouseout", () => {
                 console.log("mouseout")
-                tooltip.style("opacity",0);
+                tooltip.style("opacity", 0);
             });
 
         // 点を描画
@@ -227,7 +242,7 @@ function drawChart(data2, data1, chartId) {
             .attr("fill", "red")
             .attr("opacity", 0.2)
 
-            .on("click", function () {
+            .on("click", () => {
                 chartGroup.selectAll(".user-line")
                     .attr("opacity", 0.2)
                     .attr("stroke-widht", 2);
@@ -247,7 +262,7 @@ function drawChart(data2, data1, chartId) {
         const tooltip = chartGroup.append("g")
             .style("pointer-events", "none") // ツールチップがマウスイベントを受けないようにする
             .style("opacity", 0); // 初期状態では非表示
-        
+
         tooltip.append("rect")
             .attr("x", 0)
             .attr("y", 0)
@@ -256,9 +271,9 @@ function drawChart(data2, data1, chartId) {
             .attr("rx", 5)
             .attr("ry", 5)
             .attr("fill", "white")
-            .attr("fill-opacity",1)
+            .attr("fill-opacity", 1)
             .attr("stroke", "gray");
-        
+
         tooltip.append("text")
             .attr("x", 10)
             .attr("y", 20)
@@ -266,39 +281,8 @@ function drawChart(data2, data1, chartId) {
             .attr("fill", "black");
     });
 
-    // ズーム時の処理
-    function zoomed(event) {
-        // 新しいスケールを作成
-        const newXScale = event.transform.rescaleX(xScale);
-
-        // x軸を更新
-        xAxis.call(d3.axisBottom(newXScale)
-            .tickFormat(d3.timeFormat("%H:%M")));
-
-        // 折れ線を更新
-        chartGroup.selectAll(".user-line")
-            .attr("d", d => {
-                const newLineGenerator = d3.line()
-                    .x(d => newXScale(new Date(d.timecreated * 1000)))
-                    .y(d => {
-                        const parsedName = stripHTMLTags(d.name);
-                        const index = data1.findIndex(item => {
-                            const parsedItem = stripHTMLTags(item);
-                            return parsedItem.includes(parsedName);
-                        });
-                        return yScale(index);
-                    })
-                    .curve(d3.curveLinear);
-                return newLineGenerator(d);
-            });
-
-        // 点を更新
-        chartGroup.selectAll(".user-dot")
-            .attr("cx", d => newXScale(new Date(d.timecreated * 1000)));
-    }
-
     // ズームのリセット機能を追加
-    function resetZoom() {
+    const resetZoom = () => {
         svg.transition()
             .duration(750)
             .call(zoom.transform, d3.zoomIdentity);
@@ -324,4 +308,20 @@ function drawChart(data2, data1, chartId) {
                 .attr("opacity", 0.2)
                 .attr("r", 4);
         });
-}
+};
+
+const start_time = convertToUnixTime(start_year, start_month, start_day, start_hour, start_minute);
+const end_time = convertToUnixTime(end_year, end_month, end_day, end_hour, end_minute);
+const ydata = d3.json(`./yscalejson.php?course=${course}`);
+const log = d3.json(`./script_logjson.php?course=${course}&start_time=${start_time}&end_time=${end_time}`);
+
+// Acquire two JSON data before processing
+Promise.all([ydata, log])
+    .then(([data1, data2]) => {
+
+        // データ2に基づいて2つ目のSVGを描画
+        drawChart(data2, data1, "#chart1");
+    })
+    .catch((error) => {
+        console.error('Error loading the data:', error);
+    });
